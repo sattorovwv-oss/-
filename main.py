@@ -1,6 +1,9 @@
 import asyncio
 import logging
+import os
 from contextlib import contextmanager
+from pathlib import Path
+from shutil import copyfileobj
 
 import uvicorn
 from aiogram import Bot
@@ -15,12 +18,50 @@ from tuman.web import create_app
 from tuman.workers import backups, notifications
 
 
+def prepare_environment_file(project_root=None):
+    """Recover .env from a nested ZIP extraction without overwriting user files."""
+    root = Path(project_root) if project_root is not None else Path(__file__).resolve().parent
+    target = root / ".env"
+    if target.exists() or target.is_symlink():
+        if not target.is_file():
+            raise RuntimeError(".env рядом с main.py должен быть текстовым файлом, а не папкой.")
+        return target
+
+    # Only recover from the known double-directory ZIP layout, e.g.
+    # Desktop/--main/--main. Do not pick up an unrelated parent's credentials.
+    if root.name != root.parent.name:
+        return None
+    source = root.parent / ".env"
+    if not source.exists() and not source.is_symlink():
+        return None
+    if not source.is_file():
+        raise RuntimeError(".env во внешней папке должен быть текстовым файлом. Создайте файл с настройками, а не папку.")
+
+    with source.open("rb") as original:
+        try:
+            descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            # Another launch may have completed the same recovery.
+            if not target.is_file():
+                raise RuntimeError(".env рядом с main.py должен быть текстовым файлом.") from None
+            return target
+        try:
+            with os.fdopen(descriptor, "wb") as recovered:
+                copyfileobj(original, recovered)
+        except BaseException:
+            # This launch created the file, so it alone may remove its partial copy.
+            target.unlink(missing_ok=True)
+            raise
+    logging.info("Файл .env скопирован из внешней папки к main.py. Исходный файл сохранён.")
+    return target
+
+
 @contextmanager
 def instance_lock(path):
     path.parent.mkdir(parents=True, exist_ok=True)
     handle = open(path, "a+b")
     try:
-        if __import__("os").name == "nt":
+        if os.name == "nt":
             import msvcrt
             handle.write(b"0")
             handle.flush()
@@ -75,6 +116,7 @@ async def run(settings):
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    prepare_environment_file()
     settings = Settings.from_env()
     with instance_lock(settings.db_path.with_suffix(".lock")):
         try:
