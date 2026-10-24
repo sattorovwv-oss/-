@@ -476,6 +476,11 @@ class Store:
     def due_messages(self, limit=20):
         return self.rows("SELECT * FROM outbox WHERE state='pending' AND next_at<=? ORDER BY id LIMIT ?", (int(time.time()), limit))
 
+    def queue_connection_notice(self, chat_id, update_id, text):
+        """One recovery notice per failed Telegram update, persisted for retry."""
+        with self.connection(True) as db:
+            db.execute("INSERT OR IGNORE INTO outbox(event_key,chat_id,text,created) VALUES (?,?,?,?)", (f"connection:{chat_id}:{update_id}", chat_id, text, int(time.time())))
+
     def prepare_message(self, message):
         """Suppress obsolete stage alerts and refresh other parcel cards at send time."""
         if not message["parcel_id"]:

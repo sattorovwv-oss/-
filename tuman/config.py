@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 from pathlib import Path
+from ipaddress import ip_address
 import os
 from urllib.parse import urlsplit
 
@@ -20,6 +21,28 @@ class Settings:
     proxy_ips: str = "127.0.0.1"
     passwords: dict = field(default_factory=dict, repr=False)
     telegram_ids: dict = field(default_factory=dict)
+
+    def has_public_web_url(self):
+        """Check URL suitability for Telegram buttons, without a DNS/network call."""
+        try:
+            parsed = urlsplit(self.public_url)
+            hostname = (parsed.hostname or "").lower().rstrip(".")
+            if any(char.isspace() or ord(char) < 32 for char in self.public_url):
+                return False
+            if parsed.path not in ("", "/") or parsed.query or parsed.fragment:
+                return False
+            # Accessing port validates malformed/out-of-range explicit ports.
+            parsed.port
+            if parsed.scheme != "https" or not hostname or parsed.username or parsed.password:
+                return False
+            if hostname == "localhost" or hostname.endswith((".localhost", ".local", ".internal", ".test", ".invalid", ".example")):
+                return False
+            try:
+                return ip_address(hostname).is_global
+            except ValueError:
+                return "." in hostname
+        except ValueError:
+            return False
 
     @classmethod
     def from_env(cls):

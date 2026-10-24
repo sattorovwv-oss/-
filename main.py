@@ -8,6 +8,7 @@ from shutil import copyfileobj
 import uvicorn
 from aiogram import Bot
 from aiogram.client.default import DefaultBotProperties
+from aiogram.exceptions import TelegramNetworkError, TelegramUnauthorizedError
 from aiogram.types import BotCommand
 
 from tuman.bot import build_dispatcher
@@ -88,6 +89,8 @@ async def run(settings):
         raise RuntimeError("Create the owner account first: python -m tuman.cli create-admin --role owner --login owner")
     config = uvicorn.Config(app, host=settings.host, port=settings.port, log_level="info", access_log=False, proxy_headers=True, forwarded_allow_ips=settings.proxy_ips)
     server = uvicorn.Server(config)
+    if not settings.web_only and not settings.has_public_web_url():
+        logging.warning("Сайт пока работает локально: кнопки входа из Telegram появятся после настройки публичного HTTPS-адреса в PUBLIC_URL. Остальные функции бота доступны.")
     bot, tasks = None, []
     try:
         if not settings.web_only:
@@ -123,3 +126,9 @@ if __name__ == "__main__":
             asyncio.run(run(settings))
         except KeyboardInterrupt:
             pass
+        except TelegramNetworkError:
+            logging.error("Не удалось подключиться к Telegram после повторных попыток. Проверьте интернет и доступ к Telegram, затем повторите запуск. Токен в лог не выводится.")
+            raise SystemExit(1) from None
+        except TelegramUnauthorizedError:
+            logging.error("Telegram отклонил токен бота. Проверьте BOT_TOKEN в .env, не отправляя его в чат.")
+            raise SystemExit(1) from None

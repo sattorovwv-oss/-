@@ -54,7 +54,7 @@ def test_bot_start_add_search_and_language(store):
 def test_bot_admin_access_and_one_time_link(store):
     async def run():
         session=RecordingSession(); bot=Bot("123456:TEST_ONLY_NOT_A_REAL_BOT_TOKEN",session=session)
-        dp=build_dispatcher(store,Settings(public_url="https://cargo.example"))
+        dp=build_dispatcher(store,Settings(public_url="https://cargo.example.com"))
         await feed(dp,bot,"/panel")
         assert store.one("SELECT COUNT(*) n FROM login_tokens")["n"]==0
         with store.connection(True) as db:
@@ -62,7 +62,7 @@ def test_bot_admin_access_and_one_time_link(store):
             db.execute("INSERT INTO telegram_admins VALUES (101,?)",(aid,))
         await feed(dp,bot,"/panel")
         button=session.sent[-1].reply_markup.inline_keyboard[0][0]
-        assert button.url.startswith("https://cargo.example/auth/telegram#token=")
+        assert button.url.startswith("https://cargo.example.com/auth/telegram#token=")
         assert store.one("SELECT COUNT(*) n FROM login_tokens")["n"]==1
         await dp.storage.close()
     asyncio.run(run())

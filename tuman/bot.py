@@ -1,17 +1,21 @@
 from decimal import Decimal, ROUND_HALF_UP
 from html import escape
+import logging
 import time
 
 from aiogram import Dispatcher, F, Router
 from aiogram.enums import ChatType
-from aiogram.filters import Command, CommandStart
+from aiogram.exceptions import TelegramNetworkError
+from aiogram.filters import Command, CommandStart, ExceptionTypeFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, Message, ReplyKeyboardMarkup
+from aiogram.types import CallbackQuery, ErrorEvent, InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, Message, ReplyKeyboardMarkup
 
 from .security import display, number, track_code
 from .texts import BUTTONS, card, tr
+
+logger = logging.getLogger(__name__)
 
 
 class Dialogue(StatesGroup):
@@ -46,6 +50,22 @@ def build_dispatcher(store, settings):
     router.message.filter(F.chat.type == ChatType.PRIVATE)
     router.callback_query.filter(F.message.chat.type == ChatType.PRIVATE)
 
+    @router.errors(ExceptionTypeFilter(TelegramNetworkError))
+    async def connection_interrupted(event: ErrorEvent):
+        update = event.update
+        message = update.message
+        callback = update.callback_query
+        user = None
+        if message and message.chat.type == ChatType.PRIVATE:
+            user = message.from_user
+        elif callback and callback.message and callback.message.chat.type == ChatType.PRIVATE:
+            user = callback.from_user
+        if user:
+            p = store.one("SELECT lang FROM people WHERE telegram_id=?", (user.id,))
+            store.queue_connection_notice(user.id, update.update_id, tr("network_recovery", p["lang"] if p else "tj"))
+        logger.warning("Telegram connection interrupted while replying; recovery notice queued where possible. Saved data is retained.")
+        return True
+
     def person(message, language=None):
         user = message.from_user
         return store.telegram_person(user.id, user.full_name, user.username or "", language)
@@ -64,13 +84,22 @@ def build_dispatcher(store, settings):
         if not account:
             await message.answer(tr("denied", "ru"))
             return
-        token = store.issue_link(account_id=account["id"])
-        rows = [[InlineKeyboardButton(text="🖥 Кушодани панели анбор", url=settings.public_url+"/auth/telegram#token="+token, style="primary")], [InlineKeyboardButton(text="📊 Омор", callback_data="admin:stats")]]
+        rows = []
+        if settings.has_public_web_url():
+            token = store.issue_link(account_id=account["id"])
+            rows.append([InlineKeyboardButton(text="🖥 Кушодани панели анбор", url=settings.public_url+"/auth/telegram#token="+token, style="primary")])
+            text = "Пайванди шахсӣ барои 2 дақиқа. Онро ба каси дигар нафиристед.\nСсылка открывает ваш аккаунт без повторного ввода пароля."
+        else:
+            text = tr("web_local", "tj") + "\n\n" + tr("web_local", "ru") + "\n\nДля кнопки входа укажите публичный HTTPS-адрес сайта в PUBLIC_URL."
+        rows.append([InlineKeyboardButton(text="📊 Омор", callback_data="admin:stats")])
         if account["role"] == "owner":
             rows.append([InlineKeyboardButton(text="💵 Нарх", callback_data="admin:rate", style="success"), InlineKeyboardButton(text="📣 Эълон", callback_data="admin:broadcast", style="danger")])
-        await message.answer("Пайванди шахсӣ барои 2 дақиқа. Онро ба каси дигар нафиристед.\nСсылка открывает ваш аккаунт без повторного ввода пароля.", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+        await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
 
     async def website(message, p):
+        if not settings.has_public_web_url():
+            await message.answer(tr("web_local", p["lang"]))
+            return
         token = store.issue_link(person_id=p["id"])
         markup = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🌍 Кушодан / Открыть кабинет", url=settings.public_url+"/auth/telegram#token="+token, style="primary")],

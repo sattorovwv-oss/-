@@ -1,12 +1,11 @@
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from html import escape
 from io import BytesIO
 from pathlib import Path
 import secrets
 import time
 from urllib.parse import urlsplit
-from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
@@ -22,6 +21,9 @@ from .security import digest, display, track_code
 from .texts import status
 
 COOKIE = "tuman_session"
+# The product specifies a fixed UTC+5 offset, without configurable DST rules.
+# Windows does not ship the IANA timezone database used by ZoneInfo.
+DUSHANBE_TIMEZONE = timezone(timedelta(hours=5), name="Asia/Dushanbe")
 ROLES = {"owner": "Соҳиби система", "china": "Анбори Чин", "tajik": "Анбори Тоҷикистон", "customer": "Ҳисоби шахсӣ"}
 
 
@@ -32,7 +34,7 @@ def create_app(settings=None, store=None):
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     app.state.store, app.state.settings = store, settings
     templates = Jinja2Templates(directory=str(ROOT / "templates"))
-    templates.env.filters["date"] = lambda v: datetime.fromtimestamp(v, ZoneInfo("Asia/Dushanbe")).strftime("%d.%m.%Y %H:%M") if v else "—"
+    templates.env.filters["date"] = lambda v: datetime.fromtimestamp(v, DUSHANBE_TIMEZONE).strftime("%d.%m.%Y %H:%M") if v else "—"
     templates.env.globals.update(status=status, display=display, role_name=ROLES)
     app.mount("/static", StaticFiles(directory=str(ROOT / "static")), name="static")
 
@@ -400,7 +402,7 @@ def create_app(settings=None, store=None):
         while True:
             rows = store.list_parcels(warehouse=account["role"], limit=1000, offset=offset)
             for p in rows:
-                sheet.append([safe(p["track"]), status(p["stage"]), safe(p["owner_name"] or "Бе соҳиб"), p["weight_g"]/1000 if p["weight_g"] else None, p["price_minor"]/100, bool(p["paid"]), datetime.fromtimestamp(p["created"], ZoneInfo("Asia/Dushanbe")).isoformat()])
+                sheet.append([safe(p["track"]), status(p["stage"]), safe(p["owner_name"] or "Бе соҳиб"), p["weight_g"]/1000 if p["weight_g"] else None, p["price_minor"]/100, bool(p["paid"]), datetime.fromtimestamp(p["created"], DUSHANBE_TIMEZONE).isoformat()])
             if len(rows) < 1000:
                 break
             offset += 1000
