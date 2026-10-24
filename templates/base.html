@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="tg">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#dc3545"><title>{% block title %}Tuman Kargo{% endblock %}</title>
+  <link rel="icon" href="/static/logo.svg" type="image/svg+xml"><link rel="stylesheet" href="/static/app.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body data-csrf="{{ csrf }}" data-account-id="{{ account.id if account else '' }}">
+{% if account %}
+<aside class="sidebar">
+  <a class="brand" href="/"><span class="brand-icon">T</span><span>TUMAN <b>KARGO</b><small>Чин · Тоҷикистон</small></span></a>
+  <div class="workspace"><span class="pulse"></span>{{ role_name[account.role] }}<small>{{ account.username }}</small></div>
+  <nav aria-label="Меню">
+  {% if account.role == 'customer' %}
+    <a href="/account" class="{{ 'active' if request.url.path == '/account' }}"><span>▦</span> Борҳои ман</a>
+    <a href="/account/search" class="{{ 'active' if request.url.path == '/account/search' }}"><span>⌕</span> Ҷустуҷӯи бор</a>
+  {% else %}
+    <span class="nav-label">КОРИ АНБОР</span>
+    <a href="/admin" class="{{ 'active' if request.url.path == '/admin' }}"><span>▦</span> Шарҳи умумӣ</a>
+    <a href="/admin/scan" class="{{ 'active' if request.url.path == '/admin/scan' }}"><span>▥</span> Скан кардани бор</a>
+    <a href="/admin/parcels" class="{{ 'active' if '/admin/parcels' in request.url.path }}"><span>▣</span> Борҳо</a>
+    <a href="/admin/claims" class="{{ 'active' if request.url.path == '/admin/claims' }}"><span>✓</span> Дархостҳои пайваст</a>
+    <a href="/admin/clients" class="{{ 'active' if request.url.path == '/admin/clients' }}"><span>♧</span> Муштариён</a>
+    <a href="/admin/support" class="{{ 'active' if request.url.path == '/admin/support' }}"><span>☏</span> Дастгирӣ</a>
+    {% if account.role == 'owner' %}
+    <span class="nav-label">ИДОРАКУНӢ</span>
+    <a href="/admin/broadcast" class="{{ 'active' if request.url.path == '/admin/broadcast' }}"><span>→</span> Эълонҳо</a>
+    <a href="/admin/settings" class="{{ 'active' if request.url.path == '/admin/settings' }}"><span>⚙</span> Танзимоти система</a>
+    {% endif %}
+  {% endif %}
+    <a href="/profile" class="{{ 'active' if request.url.path == '/profile' }}"><span>◎</span> Ҳисоб ва сессияҳо</a>
+  </nav>
+  <div class="sidebar-bottom"><span class="small">Боэътимод. Дар ҳар қадам.</span><form action="/logout" method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="logout" type="submit">↪ Баромадан</button></form></div>
+</aside>
+{% else %}
+<header class="public-nav"><a class="brand light" href="/"><span class="brand-icon">T</span><span>TUMAN <b>KARGO</b></span></a><nav><a href="/login">Ворид шудан</a><a href="/register" class="button primary small-button">Бақайдгирӣ</a></nav></header>
+{% endif %}
+<main class="{{ 'main' if account else 'public-main' }}">
+  {% if account %}<header class="topbar"><span class="eyebrow">TUMAN KARGO / {{ role_name[account.role] }}</span><a class="account-chip" href="/profile"><span class="avatar">{{ account.username[0]|upper }}</span>{{ account.username }}<span>⌄</span></a></header>{% endif %}
+  <div class="content">
+  {% if web_only %}<div class="notice warning">Муҳити таҳия · Telegram хомӯш аст / Режим разработки: отправка в Telegram отключена.</div>{% endif %}
+  {% if notice %}<div class="notice success" role="status">{{ notice }}</div>{% endif %}
+  {% block content %}{% endblock %}
+  <footer class="footer">© Tuman Kargo <span>Вақт: Душанбе · UTC+5</span></footer>
+  </div>
+</main>
+</body></html>

@@ -1,0 +1,6 @@
+{% macro badge(stage) %}<span class="badge stage-{{ stage }}"><span class="dot"></span>{{ status(stage) }}</span>{% endmacro %}
+{% macro empty(text='Ҳоло маълумот нест') %}<div class="empty"><span>▣</span><h3>{{ text }}</h3><p>Маълумоти нав дар ин ҷо пайдо мешавад.</p></div>{% endmacro %}
+{% macro table(parcels, admin=True) %}
+{% if parcels %}<div class="table-scroll"><table><thead><tr><th>Трек-код</th><th>Ҳолати ҷорӣ</th><th>{{ 'Муштарӣ' if admin else 'Вазн' }}</th><th>Нарх</th><th>Пардохт</th>{% if admin %}<th></th>{% endif %}</tr></thead><tbody>
+{% for p in parcels %}<tr><td class="mono">{% if admin %}<a class="track-link" href="/admin/parcels/{{ p.id }}">{{ p.track }}</a>{% else %}{{ p.track }}{% endif %}<small>{{ p.updated|date }}</small></td><td>{{ badge(p.stage) }}</td><td>{{ (p.owner_name or 'Бе соҳиб') if admin else (display(p.weight_g / 1000) ~ ' кг' if p.weight_g else '—') }}</td><td>{{ display(p.price_minor / 100) }} <span class="muted">{{ prefs.currency }}</span></td><td><span class="{{ 'text-success' if p.paid else 'muted' }}">{{ '✓ Пардохт шуд' if p.paid else '○ Интизор' }}</span></td>{% if admin %}<td><a class="icon-link" aria-label="Кушодани бор" href="/admin/parcels/{{ p.id }}">→</a></td>{% endif %}</tr>{% endfor %}</tbody></table></div>{% else %}{{ empty() }}{% endif %}
+{% endmacro %}

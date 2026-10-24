@@ -1,0 +1,10 @@
+{$DOMAIN} {
+	request_body {
+		max_size 64KB
+	}
+	reverse_proxy app:8000
+	header {
+		-Server
+		Strict-Transport-Security "max-age=31536000"
+	}
+}
