@@ -1,4 +1,5 @@
 import os
+import shlex
 import sys
 
 from dotenv import dotenv_values
@@ -103,4 +104,20 @@ def test_google_setup_cli_errors_are_actionable_without_exposing_secret(monkeypa
     assert result.value.code == 1
     output = capsys.readouterr().out
     assert expected in output
+    assert SECRET not in output
+
+
+def test_google_setup_cli_prints_absolute_compose_command_from_any_directory(tmp_path, monkeypatch, capsys):
+    root = tmp_path / "project with spaces"
+    root.mkdir()
+    project(root)
+    (root / ".env").write_text("UNCHANGED=1\n")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(configure_google, "__file__", str(root / "scripts" / "configure_google.py"))
+    monkeypatch.setattr(sys, "argv", ["configure_google.py", "--client-id", CLIENT_ID])
+    monkeypatch.setattr(configure_google.getpass, "getpass", lambda prompt: SECRET)
+    configure_google.main()
+    output = capsys.readouterr().out
+    command = shlex.split(output.splitlines()[-1])
+    assert command == ["docker", "compose", "--env-file", str(root / ".env"), "-f", str(root / "compose.yaml"), "up", "-d", "--build", "app"]
     assert SECRET not in output

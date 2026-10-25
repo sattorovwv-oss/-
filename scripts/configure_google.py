@@ -9,6 +9,7 @@ import getpass
 import os
 from pathlib import Path
 import re
+import shlex
 import tempfile
 import time
 
@@ -72,8 +73,9 @@ def main():
     client_id = args.client_id.strip() or input("Google Client ID: ").strip()
     print("Нужен отдельный Client Secret из Google Cloud — он часто начинается с GOCSPX-.")
     secret = getpass.getpass("Google Client Secret (ввод скрыт): ")
+    root = Path(__file__).resolve().parent.parent
     try:
-        backup = configure(Path(__file__).resolve().parent.parent, client_id, secret)
+        backup = configure(root, client_id, secret)
     except ConfigurationError as error:
         print("Настройка не завершена:", str(error))
         raise SystemExit(1) from None
@@ -88,7 +90,8 @@ def main():
         print("Файловая ошибка настройки:", error.strerror or "неизвестная ошибка", "(код", error.errno, ")")
         raise SystemExit(1) from None
     print("Настройки Google сохранены. Резервная копия предыдущего .env:", backup.name)
-    print("Теперь пересоздайте app: docker compose up -d --build app")
+    print("Теперь выполните на сервере:")
+    print(shlex.join(["docker", "compose", "--env-file", str(root / ".env"), "-f", str(root / "compose.yaml"), "up", "-d", "--build", "app"]))
 
 
 if __name__ == "__main__":
