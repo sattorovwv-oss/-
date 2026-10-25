@@ -1,9 +1,11 @@
 import os
+import sys
 
 from dotenv import dotenv_values
 import pytest
 
 from scripts.configure_google import configure
+from scripts import configure_google
 
 CLIENT_ID = "123456-test-client.apps.googleusercontent.com"
 SECRET = "GOCSPX-only-for-tests-123456789"
@@ -59,3 +61,46 @@ def test_google_setup_requires_existing_environment(tmp_path):
     with pytest.raises(ValueError):
         configure(root, CLIENT_ID, SECRET)
     assert not (root / ".env").exists()
+
+
+@pytest.mark.parametrize("wrapped", ["'{value}'", '"{value}"', "\x1b[200~{value}\x1b[201~", '\x1b[200~"{value}"\x1b[201~'])
+def test_google_setup_accepts_copy_wrappers_without_storing_them(tmp_path, wrapped):
+    root = project(tmp_path)
+    (root / ".env").write_text("UNCHANGED=1\n")
+    configure(root, wrapped.format(value=CLIENT_ID), wrapped.format(value=SECRET))
+    values = dotenv_values(root / ".env")
+    assert values["GOOGLE_CLIENT_ID"] == CLIENT_ID
+    assert values["GOOGLE_CLIENT_SECRET"] == SECRET
+
+
+@pytest.mark.parametrize("secret,message", [("", "не введён"), (CLIENT_ID, "вставлен Client ID"), ("short", "Формат Client Secret")])
+def test_google_setup_reports_specific_secret_error_without_disclosing_input(tmp_path, secret, message):
+    root = project(tmp_path)
+    (root / ".env").write_text("UNCHANGED=1\n")
+    with pytest.raises(configure_google.ConfigurationError, match=message) as error:
+        configure(root, CLIENT_ID, secret)
+    if secret:
+        assert secret not in str(error.value)
+    assert (root / ".env").read_text() == "UNCHANGED=1\n"
+
+
+@pytest.mark.parametrize("error,expected", [
+    (configure_google.ConfigurationError("Client Secret не введён."), "не введён"),
+    (PermissionError(13, "Permission denied", SECRET), "нет доступа"),
+    (FileNotFoundError(2, "No such file or directory", SECRET), "Файловая ошибка"),
+    (UnicodeDecodeError("utf-8", SECRET.encode(), 0, 1, "invalid encoding"), "UTF-8"),
+])
+def test_google_setup_cli_errors_are_actionable_without_exposing_secret(monkeypatch, capsys, error, expected):
+    monkeypatch.setattr(sys, "argv", ["configure_google.py", "--client-id", CLIENT_ID])
+    monkeypatch.setattr(configure_google.getpass, "getpass", lambda prompt: SECRET)
+
+    def fail(*args):
+        raise error
+
+    monkeypatch.setattr(configure_google, "configure", fail)
+    with pytest.raises(SystemExit) as result:
+        configure_google.main()
+    assert result.value.code == 1
+    output = capsys.readouterr().out
+    assert expected in output
+    assert SECRET not in output

@@ -13,17 +13,36 @@ import tempfile
 import time
 
 
+class ConfigurationError(ValueError):
+    """A fixed, user-facing message which never contains configuration values."""
+
+
+def clean_input(value):
+    value = value.strip()
+    # Some Windows SSH terminals paste these wrappers into hidden input.
+    if value.startswith("\x1b[200~") and value.endswith("\x1b[201~"):
+        value = value[6:-6].strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+        value = value[1:-1].strip()
+    return value
+
+
 def configure(root, client_id, client_secret):
+    client_id, client_secret = clean_input(client_id), clean_input(client_secret)
     root = Path(root)
     target = root / ".env"
     if not (root / "compose.yaml").is_file() or not (root / "main.py").is_file():
-        raise ValueError("Папка проекта не найдена.")
+        raise ConfigurationError("Папка проекта не найдена.")
     if target.is_symlink() or not target.is_file():
-        raise ValueError("Сначала создайте обычный файл .env в папке проекта.")
+        raise ConfigurationError("Не найден обычный файл /opt/tuman-kargo/.env. Проверьте путь и тип файла.")
     if not re.fullmatch(r"[0-9]+-[A-Za-z0-9_-]+\.apps\.googleusercontent\.com", client_id):
-        raise ValueError("Проверьте полный Google Client ID: он заканчивается на .apps.googleusercontent.com.")
+        raise ConfigurationError("Проверьте полный Google Client ID: он заканчивается на .apps.googleusercontent.com.")
+    if not client_secret:
+        raise ConfigurationError("Client Secret не введён. Скопируйте его из настроек OAuth-клиента и вставьте в скрытый запрос.")
+    if client_secret.endswith(".apps.googleusercontent.com"):
+        raise ConfigurationError("Вместо Client Secret вставлен Client ID. Нужен отдельный Client Secret из настроек OAuth-клиента.")
     if not re.fullmatch(r"[A-Za-z0-9_-]{16,256}", client_secret):
-        raise ValueError("Проверьте Client Secret: вставьте его целиком без пробелов.")
+        raise ConfigurationError("Формат Client Secret не принят. Вставьте только значение секрета целиком, без названия поля, пробелов и переносов строк.")
     previous = target.read_bytes()
     lines = previous.decode("utf-8").splitlines(keepends=True)
     kept = [line for line in lines if not re.match(r"\s*(?:export\s+)?GOOGLE_CLIENT_(?:ID|SECRET)\s*=", line)]
@@ -51,11 +70,22 @@ def main():
     parser.add_argument("--client-id", default="")
     args = parser.parse_args()
     client_id = args.client_id.strip() or input("Google Client ID: ").strip()
-    secret = getpass.getpass("Google Client Secret (ввод скрыт): ").strip()
+    print("Нужен отдельный Client Secret из Google Cloud — он часто начинается с GOCSPX-.")
+    secret = getpass.getpass("Google Client Secret (ввод скрыт): ")
     try:
         backup = configure(Path(__file__).resolve().parent.parent, client_id, secret)
-    except (ValueError, OSError, UnicodeError):
-        print("Настройка не завершена. Проверьте Client ID, Client Secret и доступ к .env. Секрет в чат не отправляйте.")
+    except ConfigurationError as error:
+        print("Настройка не завершена:", str(error))
+        raise SystemExit(1) from None
+    except UnicodeError:
+        print("Настройка не завершена: файл .env должен быть сохранён в UTF-8. Его содержимое в чат не отправляйте.")
+        raise SystemExit(1) from None
+    except PermissionError:
+        print("Настройка не завершена: нет доступа к .env или папке проекта. Запустите команду от root на сервере.")
+        raise SystemExit(1) from None
+    except OSError as error:
+        # strerror excludes paths and any file content, unlike the full exception.
+        print("Файловая ошибка настройки:", error.strerror or "неизвестная ошибка", "(код", error.errno, ")")
         raise SystemExit(1) from None
     print("Настройки Google сохранены. Резервная копия предыдущего .env:", backup.name)
     print("Теперь пересоздайте app: docker compose up -d --build app")
