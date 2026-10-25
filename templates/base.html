@@ -40,7 +40,7 @@
   {% if account %}<header class="topbar"><span class="eyebrow">TUMAN KARGO / {{ role_name[account.role] }}</span><a class="account-chip" href="/profile"><span class="avatar">{{ account.username[0]|upper }}</span>{{ account.username }}<span>⌄</span></a></header>{% endif %}
   <div class="content">
   {% if web_only %}<div class="notice warning">Муҳити таҳия · Telegram хомӯш аст / Режим разработки: отправка в Telegram отключена.</div>{% endif %}
-  {% if notice %}<div class="notice success" role="status">{{ notice }}</div>{% endif %}
+  {% if notice %}<div class="notice {{ notice_class }}" role="status">{{ notice }}</div>{% endif %}
   {% block content %}{% endblock %}
   <footer class="footer">© Tuman Kargo <span>Вақт: Душанбе · UTC+5</span></footer>
   </div>

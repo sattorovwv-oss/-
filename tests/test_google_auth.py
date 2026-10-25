@@ -313,7 +313,7 @@ class FakeResponse:
         pass
 
 
-def transport(monkeypatch, token_data=None, status=200, failure=None, profile=None):
+def transport(monkeypatch, token_data=None, status=200, failure=None, profile=None, userinfo_status=200):
     requests = []
 
     class Session:
@@ -336,7 +336,7 @@ def transport(monkeypatch, token_data=None, status=200, failure=None, profile=No
 
         def get(self, url, **kwargs):
             requests.append(("GET", url, kwargs))
-            return FakeResponse(PROFILE if profile is None else profile)
+            return FakeResponse(PROFILE if profile is None else profile, userinfo_status)
 
     monkeypatch.setattr(google_auth, "ClientSession", Session)
     return requests
@@ -375,3 +375,43 @@ def test_google_transport_rejects_header_injection_and_oversized_response(monkey
     transport(monkeypatch, token_data={"access_token": "x"*65000, "token_type": "Bearer"})
     with pytest.raises(google_auth.GoogleOAuthError):
         asyncio.run(google_auth.exchange_code(Settings(), "provider-code", "verifier"))
+
+
+@pytest.mark.parametrize("code,status", [("invalid_client", 401), ("invalid_grant", 400), ("redirect_uri_mismatch", 400), ("unauthorized_client", 401), ("invalid_request", 400)])
+def test_google_transport_reports_only_allowlisted_provider_errors(monkeypatch, caplog, code, status):
+    secret = "must-never-appear-in-diagnostics"
+    transport(monkeypatch, status=status, token_data={"error": code, "error_description": secret, "access_token": secret, "client_secret": secret})
+    with pytest.raises(google_auth.GoogleOAuthError) as error:
+        asyncio.run(google_auth.exchange_code(Settings(), secret, "verifier"))
+    assert code in str(error.value)
+    assert secret not in str(error.value)
+    assert secret not in caplog.text
+    assert f"stage=token status={status} error={code}" in caplog.text
+
+
+def test_google_transport_does_not_echo_unknown_provider_error(monkeypatch, caplog):
+    secret = "private-response-content"
+    transport(monkeypatch, status=403, token_data={"error": secret, "error_description": secret})
+    with pytest.raises(google_auth.GoogleOAuthError) as error:
+        asyncio.run(google_auth.exchange_code(Settings(), "code", "verifier"))
+    assert "HTTP 403" in str(error.value)
+    assert secret not in str(error.value) and secret not in caplog.text
+    assert "error=unknown" in caplog.text
+
+
+def test_google_transport_reports_userinfo_stage_safely(monkeypatch, caplog):
+    transport(monkeypatch, profile={"error": "invalid_token", "error_description": "private-token"}, userinfo_status=401)
+    with pytest.raises(google_auth.GoogleOAuthError, match="invalid_token"):
+        asyncio.run(google_auth.exchange_code(Settings(), "code", "verifier"))
+    assert "stage=userinfo status=401 error=invalid_token" in caplog.text
+    assert "private-token" not in caplog.text
+
+
+def test_google_login_failure_is_rendered_as_warning(google_client):
+    client, _ = google_client
+    state = start(client)["state"][0]
+    response = callback(client, state, "network-error")
+    assert "notice_type=error" in response.headers["location"]
+    page = client.get(response.headers["location"])
+    assert 'class="notice warning" role="status"' in page.text
+    assert 'class="notice success" role="status"' not in page.text

@@ -59,10 +59,13 @@ def create_app(settings=None, store=None):
         response.set_cookie(COOKIE, token, max_age=43200, httponly=True, secure=settings.production, samesite="lax", path="/")
         return response
 
-    def redirect(path, message=""):
+    def redirect(path, message="", *, notice_type="success"):
         if message:
             from urllib.parse import urlencode
-            path += ("&" if "?" in path else "?") + urlencode({"notice": message})
+            params = {"notice": message}
+            if notice_type == "error":
+                params["notice_type"] = "error"
+            path += ("&" if "?" in path else "?") + urlencode(params)
         return RedirectResponse(path, status_code=303)
 
     def view(request, template, **data):
@@ -72,7 +75,7 @@ def create_app(settings=None, store=None):
             token = store.new_session(None, request.headers.get("user-agent", ""), request.client.host if request.client else "")
             session = store.session(token)
         account = request.state.account
-        context = {"request": request, "account": account, "session": session, "csrf": session["csrf"], "prefs": store.preferences(), "web_only": settings.web_only, "google_enabled": settings.google_enabled, "notice": request.query_params.get("notice", "")[:200], **data}
+        context = {"request": request, "account": account, "session": session, "csrf": session["csrf"], "prefs": store.preferences(), "web_only": settings.web_only, "google_enabled": settings.google_enabled, "notice": request.query_params.get("notice", "")[:200], "notice_class": "warning" if request.query_params.get("notice_type") == "error" else "success", **data}
         response = templates.TemplateResponse(request=request, name=template, context=context)
         if token:
             set_cookie(response, token)
@@ -215,14 +218,14 @@ def create_app(settings=None, store=None):
         if "error" in params:
             if len(params.getlist("error")) != 1 or "code" in params:
                 raise ValueError("Некорректный ответ Google. Повторите вход.")
-            return redirect(target, "Вход через Google отменён. Вы можете попробовать ещё раз.")
+            return redirect(target, "Вход через Google отменён. Вы можете попробовать ещё раз.", notice_type="error")
         code = params.get("code", "")
         if len(params.getlist("code")) != 1 or not 1 <= len(code) <= 4096 or any(ord(char) < 32 for char in code):
             raise ValueError("Некорректный ответ Google. Повторите вход.")
         try:
             profile = await google_auth.exchange_code(settings, code, flow["verifier"])
         except google_auth.GoogleOAuthError as exc:
-            return redirect(target, str(exc))
+            return redirect(target, str(exc), notice_type="error")
         account, token = store.complete_google_auth(flow, profile, request.headers.get("user-agent", ""), request.client.host if request.client else "")
         return set_cookie(redirect("/profile", "Google подключён к вашему аккаунту.") if flow["account_id"] is not None else redirect("/account"), token)
 
