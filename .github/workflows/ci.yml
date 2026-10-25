@@ -19,6 +19,7 @@ jobs:
       - run: python -m pytest -q
       - run: python -m playwright install --with-deps chromium
       - run: python -m tests.browser_flow
+      - run: python -m tests.browser_google
       - uses: actions/upload-artifact@v4
         if: always()
         with:

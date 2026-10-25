@@ -21,6 +21,16 @@ class Settings:
     proxy_ips: str = "127.0.0.1"
     passwords: dict = field(default_factory=dict, repr=False)
     telegram_ids: dict = field(default_factory=dict)
+    google_client_id: str = ""
+    google_client_secret: str = field(default="", repr=False)
+
+    @property
+    def google_enabled(self):
+        return bool(self.google_client_id and self.google_client_secret)
+
+    @property
+    def google_callback_url(self):
+        return self.public_url.rstrip("/") + "/auth/google/callback"
 
     def has_public_web_url(self):
         """Check URL suitability for Telegram buttons, without a DNS/network call."""
@@ -59,6 +69,8 @@ class Settings:
             proxy_ips=os.getenv("FORWARDED_ALLOW_IPS", "127.0.0.1"),
             passwords={r: os.getenv(r.upper()+"_PASSWORD", "") for r in ("owner", "china", "tajik")},
             telegram_ids={r: [int(x.strip()) for x in os.getenv(r.upper()+"_TELEGRAM_IDS", "").split(",") if x.strip()] for r in ("owner", "china", "tajik")},
+            google_client_id=os.getenv("GOOGLE_CLIENT_ID", "").strip(),
+            google_client_secret=os.getenv("GOOGLE_CLIENT_SECRET", "").strip(),
         )
         u = urlsplit(s.public_url)
         if u.scheme not in ("http", "https") or not u.hostname or u.username or u.path not in ("", "/") or u.query or u.fragment:

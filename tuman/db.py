@@ -36,6 +36,18 @@ CREATE TABLE IF NOT EXISTS login_tokens (
 );
 CREATE TABLE IF NOT EXISTS attempts (key TEXT NOT NULL, at INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS attempts_key ON attempts(key,at);
+CREATE TABLE IF NOT EXISTS external_identities (
+ provider TEXT NOT NULL CHECK(provider='google'), subject TEXT NOT NULL,
+ account_id INTEGER NOT NULL REFERENCES accounts(id), email TEXT NOT NULL,
+ created INTEGER NOT NULL, updated INTEGER NOT NULL,
+ PRIMARY KEY(provider,subject), UNIQUE(provider,account_id)
+);
+CREATE TABLE IF NOT EXISTS oauth_requests (
+ state_hash TEXT PRIMARY KEY,
+ session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+ account_id INTEGER REFERENCES accounts(id) ON DELETE CASCADE,
+ verifier TEXT NOT NULL, expires INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS parcels (
  id INTEGER PRIMARY KEY, track TEXT NOT NULL UNIQUE, owner_id INTEGER REFERENCES people(id),
  stage INTEGER NOT NULL DEFAULT 0 CHECK(stage IN (0,10,20,30,40)), weight_g INTEGER,
@@ -73,7 +85,7 @@ CREATE TABLE IF NOT EXISTS tickets (
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 INSERT OR IGNORE INTO settings VALUES ('rate_minor','0');
 INSERT OR IGNORE INTO settings VALUES ('currency','сомонӣ');
-PRAGMA user_version=1;
+PRAGMA user_version=2;
 """
 
 
@@ -210,8 +222,18 @@ class Store:
 
     def change_credentials(self, account_id, current_password, login, new_password, keep_session):
         account = self.account(account_id)
-        if not account or not password_matches(current_password, account["password_hash"]):
+        if not account:
             raise ValueError("Текущий пароль неверен / Рамзи ҷорӣ нодуруст аст")
+        if account["password_hash"]:
+            if not password_matches(current_password, account["password_hash"]):
+                raise ValueError("Текущий пароль неверен / Рамзи ҷорӣ нодуруст аст")
+        else:
+            now = int(time.time())
+            fresh_google = self.one("SELECT s.id FROM sessions s JOIN external_identities e ON e.account_id=s.account_id AND e.provider='google' WHERE s.id=? AND s.account_id=? AND s.method='google' AND s.created>=? AND s.expires>?", (keep_session, account_id, now-600, now))
+            if account["role"] != "customer" or not fresh_google:
+                raise ValueError("Для установки первого пароля заново войдите через Google и откройте профиль в течение 10 минут.")
+            if not new_password:
+                raise ValueError("Укажите новый пароль: от 12 до 128 символов.")
         login = username(login)
         hashed = password_hash(new_password) if new_password else account["password_hash"]
         try:
@@ -222,6 +244,61 @@ class Store:
                 db.execute("INSERT INTO events(account_id,action,data,created) VALUES (?,'credentials_changed','{}',?)", (account_id, int(time.time())))
         except sqlite3.IntegrityError:
             raise ValueError("Этот логин занят") from None
+
+    def begin_google_auth(self, session_id, account_id=None):
+        state, verifier, now = secrets.token_urlsafe(32), secrets.token_urlsafe(48), int(time.time())
+        with self.connection(True) as db:
+            session = db.execute("SELECT account_id FROM sessions WHERE id=? AND expires>?", (session_id, now)).fetchone()
+            if not session or session["account_id"] != account_id:
+                raise ValueError("Обновите страницу и повторите вход через Google.")
+            if account_id is not None:
+                account = db.execute("SELECT role FROM accounts WHERE id=? AND enabled=1", (account_id,)).fetchone()
+                if not account or account["role"] != "customer":
+                    raise PermissionError("Вход через Google доступен клиентам.")
+            db.execute("DELETE FROM oauth_requests WHERE expires<=?", (now,))
+            db.execute("INSERT INTO oauth_requests VALUES (?,?,?,?,?)", (digest(state), session_id, account_id, verifier, now+600))
+        return state, verifier
+
+    def consume_google_auth(self, state, session_id):
+        if not isinstance(state, str) or not 20 <= len(state) <= 100 or not session_id:
+            raise ValueError("Ссылка входа устарела. Начните вход через Google заново.")
+        with self.connection(True) as db:
+            row = db.execute("SELECT o.* FROM oauth_requests o JOIN sessions s ON s.id=o.session_id WHERE o.state_hash=? AND o.session_id=? AND o.expires>? AND s.expires>? AND s.account_id IS o.account_id", (digest(state), session_id, int(time.time()), int(time.time()))).fetchone()
+            if not row:
+                raise ValueError("Ссылка входа устарела. Начните вход через Google заново.")
+            db.execute("DELETE FROM oauth_requests WHERE state_hash=?", (row["state_hash"],))
+        return dict(row)
+
+    def complete_google_auth(self, flow, profile, agent="", ip=""):
+        # This accepts only a server-validated UserInfo result, never browser JSON.
+        from .google_auth import verified_profile
+        profile = verified_profile(profile)
+        token, csrf, now = secrets.token_urlsafe(32), secrets.token_urlsafe(32), int(time.time())
+        with self.connection(True) as db:
+            previous = db.execute("SELECT account_id FROM sessions WHERE id=? AND expires>?", (flow["session_id"], now)).fetchone()
+            if not previous or previous["account_id"] != flow["account_id"]:
+                raise ValueError("Сеанс изменился. Начните вход через Google заново.")
+            linked = db.execute("SELECT account_id FROM external_identities WHERE provider='google' AND subject=?", (profile["sub"],)).fetchone()
+            if flow["account_id"] is not None:
+                aid = flow["account_id"]
+                if linked and linked["account_id"] != aid:
+                    raise ValueError("Этот Google уже связан с другим аккаунтом. Выйдите из текущего аккаунта и войдите через Google.")
+                other = db.execute("SELECT subject FROM external_identities WHERE provider='google' AND account_id=?", (aid,)).fetchone()
+                if other and other["subject"] != profile["sub"]:
+                    raise ValueError("К аккаунту уже подключён другой Google.")
+            elif linked:
+                aid = linked["account_id"]
+            else:
+                login = "google_" + secrets.token_hex(12)
+                pid = db.execute("INSERT INTO people(name,lang,created) VALUES (?,'ru',?)", (profile["name"], now)).lastrowid
+                aid = db.execute("INSERT INTO accounts(username,password_hash,role,person_id,created) VALUES (?,'','customer',?,?)", (login, pid, now)).lastrowid
+            account = db.execute("SELECT * FROM accounts WHERE id=? AND enabled=1 AND role='customer'", (aid,)).fetchone()
+            if not account:
+                raise ValueError("Вход через Google для этого аккаунта недоступен.")
+            db.execute("INSERT INTO external_identities VALUES ('google',?,?,?,?,?) ON CONFLICT(provider,subject) DO UPDATE SET email=excluded.email,updated=excluded.updated", (profile["sub"], aid, profile["email"], now, now))
+            db.execute("INSERT INTO sessions VALUES (?,?,?,?,?,?,?,?,?)", (digest(token), aid, csrf, now, now, now+43200, agent[:300], ip[:64], "google"))
+            db.execute("DELETE FROM sessions WHERE id=?", (flow["session_id"],))
+        return self.account(aid), token
 
     def issue_link(self, person_id=None, account_id=None):
         if (person_id is None) == (account_id is None):

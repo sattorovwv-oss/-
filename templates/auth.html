@@ -1,6 +1,11 @@
 {% extends 'base.html' %}{% block content %}
 <div class="auth-layout"><div class="auth-description"><span class="eyebrow">TUMAN KARGO</span><h1>{{ 'Роҳи бор аз ҳисоби шумо оғоз мешавад.' if register else 'Хуш омадед.' }}</h1><p>{{ 'Бақайдгирӣ барои муштариён. Барои огоҳии худкор Telegram-ро дар ҳисоби худ пайваст кунед.' if register else 'Муштариён ва кормандони анбор бо логин ва рамзи шахсии худ ворид мешаванд.' }}</p><div class="route-mark">ЧИН <span>──────── →</span> ТОҶИКИСТОН</div></div>
-<section class="panel auth-card"><h2>{{ 'Бақайдгирӣ' if register else 'Ворид шудан' }}</h2><p class="muted">{{ 'Создать клиентский аккаунт' if register else 'Войти в свой аккаунт' }}</p><form action="{{ '/register' if register else '/login' }}" method="post" class="stack"><input type="hidden" name="csrf" value="{{ csrf }}">
+<section class="panel auth-card"><h2>{{ 'Бақайдгирӣ' if register else 'Ворид шудан' }}</h2><p class="muted">{{ 'Создать клиентский аккаунт' if register else 'Войти в свой аккаунт' }}</p>
+{% if google_enabled %}
+<form action="/auth/google" method="post" class="google-form"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="mode" value="login"><button class="google-button" type="submit">{% include '_google_button.html' %}<span>Продолжить с Google</span></button></form>
+<p class="google-hint">Быстрый вход для клиентов</p><div class="auth-divider"><span>ё / или</span></div>
+{% endif %}
+<form action="{{ '/register' if register else '/login' }}" method="post" class="stack"><input type="hidden" name="csrf" value="{{ csrf }}">
 {% if register %}<label>Номи шумо / Ваше имя<input name="name" maxlength="100" autocomplete="name" required></label>{% endif %}
 <label>Логин<input name="username" minlength="3" maxlength="40" pattern="[A-Za-z0-9_]{3,40}" autocomplete="username" required><small>Латиница, цифры и _</small></label>
 <label>Рамз / Пароль<input type="password" name="password" minlength="{{ 12 if register else 1 }}" maxlength="128" autocomplete="{{ 'new-password' if register else 'current-password' }}" required></label>

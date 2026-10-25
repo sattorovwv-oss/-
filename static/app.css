@@ -1023,6 +1023,48 @@ input[type="checkbox"] {
   padding-top: 20px;
   font-size: 12px;
 }
+.google-form {
+  margin-top: 20px;
+}
+.google-button {
+  width: 100%;
+  min-height: 46px;
+  background: #fff;
+  border: 1px solid #dadce0;
+  color: #3c4043;
+  font-weight: 500;
+  gap: 12px;
+}
+.google-button:hover {
+  background: #f8faff;
+  border-color: #c2d2eb;
+}
+.google-icon {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
+.auth-card .google-hint {
+  text-align: center;
+  font-size: 11px;
+  margin: 9px 0 0;
+  color: var(--muted);
+}
+.auth-divider {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 22px 0;
+  color: #8993a1;
+  font-size: 11px;
+}
+.auth-divider::before,
+.auth-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+}
 .auth-card .small {
   margin-top: 20px;
   margin-bottom: 0;

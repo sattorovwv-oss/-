@@ -16,6 +16,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .config import ROOT, Settings
+from . import google_auth
 from .db import ConfirmTelegramLink, Store
 from .security import digest, display, track_code
 from .texts import status
@@ -71,7 +72,7 @@ def create_app(settings=None, store=None):
             token = store.new_session(None, request.headers.get("user-agent", ""), request.client.host if request.client else "")
             session = store.session(token)
         account = request.state.account
-        context = {"request": request, "account": account, "session": session, "csrf": session["csrf"], "prefs": store.preferences(), "web_only": settings.web_only, "notice": request.query_params.get("notice", "")[:200], **data}
+        context = {"request": request, "account": account, "session": session, "csrf": session["csrf"], "prefs": store.preferences(), "web_only": settings.web_only, "google_enabled": settings.google_enabled, "notice": request.query_params.get("notice", "")[:200], **data}
         response = templates.TemplateResponse(request=request, name=template, context=context)
         if token:
             set_cookie(response, token)
@@ -99,6 +100,9 @@ def create_app(settings=None, store=None):
             return JSONResponse({"detail": "Request too large"}, 413)
         response = await call_next(request)
         response.headers.update({"X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY", "Referrer-Policy": "no-referrer", "Cache-Control": "no-store", "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'", "Permissions-Policy": "camera=(), microphone=(), geolocation=()"})
+        if settings.google_enabled:
+            # Chrome also checks the redirect following the same-origin POST.
+            response.headers["Content-Security-Policy"] += " https://accounts.google.com"
         if settings.production:
             response.headers["Strict-Transport-Security"] = "max-age=31536000"
         return response
@@ -177,6 +181,51 @@ def create_app(settings=None, store=None):
         response.delete_cookie(COOKIE, path="/")
         return response
 
+    @app.post("/auth/google")
+    async def google_start(request: Request):
+        if not settings.google_enabled:
+            raise HTTPException(404, "Вход через Google пока не подключён.")
+        data = await form(request)
+        mode = str(data.get("mode", "login"))
+        if mode not in ("login", "link"):
+            raise ValueError("Некорректный способ входа.")
+        current = request.state.account
+        if current and current["role"] != "customer":
+            raise HTTPException(403, "Google подключается к клиентскому аккаунту. Для сотрудников используйте текущий способ входа.")
+        if mode == "link":
+            current = identity(request, True)
+        elif current:
+            return redirect("/profile", "Для подключения Google используйте кнопку в профиле.")
+        ip = request.client.host if request.client else ""
+        if store.limited("google-start:" + digest(ip), limit=20, seconds=600):
+            raise HTTPException(429, "Слишком много попыток входа. Повторите позже.")
+        state, verifier = store.begin_google_auth(request.state.session["id"], current["id"] if current else None)
+        return RedirectResponse(google_auth.authorization_url(settings, state, verifier), status_code=303)
+
+    @app.get("/auth/google/callback")
+    async def google_callback(request: Request):
+        if not settings.google_enabled:
+            raise HTTPException(404, "Вход через Google пока не подключён.")
+        params = request.query_params
+        if len(params.getlist("state")) != 1:
+            raise ValueError("Ссылка входа недействительна. Начните вход через Google заново.")
+        session = request.state.session
+        flow = store.consume_google_auth(params.get("state"), session["id"] if session else None)
+        target = "/profile" if flow["account_id"] is not None else "/login"
+        if "error" in params:
+            if len(params.getlist("error")) != 1 or "code" in params:
+                raise ValueError("Некорректный ответ Google. Повторите вход.")
+            return redirect(target, "Вход через Google отменён. Вы можете попробовать ещё раз.")
+        code = params.get("code", "")
+        if len(params.getlist("code")) != 1 or not 1 <= len(code) <= 4096 or any(ord(char) < 32 for char in code):
+            raise ValueError("Некорректный ответ Google. Повторите вход.")
+        try:
+            profile = await google_auth.exchange_code(settings, code, flow["verifier"])
+        except google_auth.GoogleOAuthError as exc:
+            return redirect(target, str(exc))
+        account, token = store.complete_google_auth(flow, profile, request.headers.get("user-agent", ""), request.client.host if request.client else "")
+        return set_cookie(redirect("/profile", "Google подключён к вашему аккаунту.") if flow["account_id"] is not None else redirect("/account"), token)
+
     @app.get("/auth/telegram")
     def telegram_page(request: Request):
         return view(request, "telegram.html")
@@ -240,7 +289,8 @@ def create_app(settings=None, store=None):
     def profile(request: Request):
         account = identity(request)
         sessions = store.rows("SELECT id,created,seen,expires,agent,ip,method FROM sessions WHERE account_id=? AND expires>? ORDER BY seen DESC", (account["id"], int(time.time())))
-        return view(request, "profile.html", sessions=sessions)
+        google_identity = store.one("SELECT email FROM external_identities WHERE provider='google' AND account_id=?", (account["id"],))
+        return view(request, "profile.html", sessions=sessions, google_identity=google_identity)
 
     @app.post("/profile/credentials")
     async def credentials(request: Request):
